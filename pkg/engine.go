@@ -20,7 +20,11 @@ var webApiStorage []*IWebAPI
 
 type Methods int
 
-type Filter func(ctx *gin.Context) bool
+type FilterTypes int
+
+type filter func(ctx *gin.Context) bool
+type OnExecuting filter
+type OnExecuted filter
 
 type Engine struct {
 	instance *gin.Engine
@@ -31,12 +35,11 @@ type IWebAPI interface {
 }
 
 type webApi struct {
-	route       string
-	method      Methods
-	onExecuting []Filter
-	handler     func(ctx *gin.Context)
-	onExecuted  []Filter
-	initFn      func()
+	route   string
+	method  Methods
+	filters []filter
+	handler func(ctx *gin.Context)
+	initFn  func()
 }
 
 func (webApi webApi) Method() Methods {
@@ -49,20 +52,27 @@ func (webApi webApi) Route() string {
 
 func (webApi webApi) Handler() func(ctx *gin.Context) {
 	return func(ctx *gin.Context) {
-		if webApi.onExecuting != nil {
-			for _, filter := range webApi.onExecuting {
-				filter(ctx)
-				if !filter(ctx) {
-					return
+		onExecuted := make([]OnExecuted, 0)
+		if webApi.filters != nil {
+			for _, filter := range webApi.filters {
+				switch t := any(filter).(type) {
+				case OnExecuting:
+					{
+						if !t(ctx) {
+							return
+						}
+					}
+				case OnExecuted:
+					{
+						onExecuted = append(onExecuted, t)
+					}
 				}
 			}
 		}
 		webApi.handler(ctx)
-		if webApi.onExecuted != nil {
-			for _, filter := range webApi.onExecuted {
-				if !filter(ctx) {
-					return
-				}
+		for _, filter := range onExecuted {
+			if !filter(ctx) {
+				return
 			}
 		}
 	}
@@ -72,8 +82,8 @@ func (webApi webApi) InitFn() func() {
 	return webApi.initFn
 }
 
-func NewAPI(route IRoute, method Methods, preFilters []Filter, handler func(ctx *gin.Context), postFilters []Filter, initFn func()) *webApi {
-	webApi := webApi{route.GetRoute(), method, preFilters, handler, postFilters, initFn}
+func NewAPI(route IRoute, method Methods, handler func(ctx *gin.Context), initFn func(), filters ...filter) *webApi {
+	webApi := webApi{route.GetRoute(), method, filters, handler, initFn}
 	var router IWebAPI = webApi
 	registerApi(&router)
 	return &webApi
